@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"edson.com/go/rest-ws/models"
-	"fmt"
 	_ "github.com/lib/pq"
 	"log"
 )
@@ -59,8 +58,25 @@ func (repo *PostgresRepository) GetUserById(ctx context.Context, id string) (*mo
 }
 
 func (repo *PostgresRepository) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	fmt.Println("Postgres", email)
-	rows, err := repo.db.QueryContext(ctx, "SELECT id, email, password FROM users WHERE email = $1", email)
+	var user models.User
+	err := repo.db.QueryRowContext(ctx, "SELECT id, email, password FROM users WHERE email = $1", email).Scan(&user.Id, &user.Email, &user.Password)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (repo *PostgresRepository) InsertPost(ctx context.Context, post *models.Post) error {
+	_, err := repo.db.ExecContext(ctx, "INSERT INTO posts (id, post_content, user_id) VALUES ($1, $2, $3)", post.Id, post.PostContent, post.UserId)
+	return err
+}
+
+func (repo *PostgresRepository) GetPostById(ctx context.Context, id string) (*models.Post, error) {
+	rows, err := repo.db.QueryContext(ctx, "SELECT id, post_content, created_id, user_id FROM posts WHERE id = $1", id)
 
 	if err != nil {
 		return nil, err
@@ -72,11 +88,11 @@ func (repo *PostgresRepository) GetUserByEmail(ctx context.Context, email string
 		}
 	}()
 
-	var user = models.User{}
+	var post = models.Post{}
 
 	for rows.Next() {
-		if err = rows.Scan(&user.Id, &user.Email); err == nil {
-			return &user, nil
+		if err = rows.Scan(&post.Id, &post.PostContent, &post.CreatedAt, &post.UserId); err == nil {
+			return &post, nil
 		}
 	}
 
@@ -84,6 +100,43 @@ func (repo *PostgresRepository) GetUserByEmail(ctx context.Context, email string
 		return nil, err
 	}
 
-	fmt.Println("user---->", &user)
-	return &user, nil
+	return &post, nil
+}
+
+func (repo *PostgresRepository) UpdatePost(ctx context.Context, post *models.Post) error {
+	_, err := repo.db.ExecContext(ctx, "UPDATE posts SET post_content = $1 WHERE id = $2 AND user_id = $3", post.PostContent, post.Id, post.UserId)
+	return err
+}
+
+func (repo *PostgresRepository) DeletePost(ctx context.Context, id string, userId string) error {
+	_, err := repo.db.ExecContext(ctx, "DELETE FROM posts WHERE id = $1 AND user_id = $2", id, userId)
+	return err
+}
+
+func (repo *PostgresRepository) ListPost(ctx context.Context, page uint64) ([]*models.Post, error) {
+	rows, err := repo.db.QueryContext(ctx, "SELECT id, post_content, user_id, created_id FROM posts LIMIT $1 OFFSET $2", 2, page*2)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		err = rows.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	var posts []*models.Post
+	for rows.Next() {
+		var post = models.Post{}
+		if err = rows.Scan(&post.Id, &post.PostContent, &post.UserId, &post.CreatedAt); err == nil {
+			posts = append(posts, &post)
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return posts, nil
 }
